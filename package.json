@@ -1,7 +1,10 @@
 {
-  "name": "@local/dsh-session-groups",
+  "name": "dsh-session-group",
   "version": "0.2.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "description": "Persistent group chats for coordinating DeepSeek Harness sessions",
   "type": "module",
   "exports": {
@@ -39,6 +42,7 @@
   "scripts": {
     "bootstrap:local": "node scripts/bootstrap-local.mjs",
     "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",

@@ -13,7 +13,7 @@ import {WorkspaceSessionPicker} from './WorkspaceSessionPicker.tsx';
 import {zh,en,type Key} from './locales.ts';
 declare const __GROUP_STYLES__:string;
 const TAB_KIND='session-groups';
-const TAB_ID='@local/dsh-session-groups/panel';
+const TAB_ID='dsh-session-group/panel';
 export const inject=['remote','sessions','fileUpload','workspaces','uiWorkspace','layout','sidebarRight','sidebarRightTabs','slots','locale'];
 const uuid=()=>crypto.randomUUID();
 type DraftCommand=Command extends infer C?C extends Command?Omit<C,'commandId'>:never:never;
@@ -28,7 +28,7 @@ export async function apply(ctx:Context):Promise<void>{
  ctx.effect(()=>root.locale.register('session-groups',{zh,en}),'session-groups: locales');
  const release=await root.remote.$mount(remoteInfo);
  ctx.effect(()=>release,'session-groups: Remote methods');
- ctx.effect(()=>{const style=document.createElement('style');style.dataset.plugin='@local/dsh-session-groups';style.dataset.pluginCss='session-groups';style.textContent=__GROUP_STYLES__;document.head.append(style);return()=>style.remove();},'session-groups: styles');
+ ctx.effect(()=>{const style=document.createElement('style');style.dataset.plugin='dsh-session-group';style.dataset.pluginCss='session-groups';style.textContent=__GROUP_STYLES__;document.head.append(style);return()=>style.remove();},'session-groups: styles');
  await ctx.inject(['remote.sessionGroups'],activeCtx=>{
   const ports=activeCtx as unknown as ClientPorts;
   const controller=new Controller(ports.remote.sessionGroups);

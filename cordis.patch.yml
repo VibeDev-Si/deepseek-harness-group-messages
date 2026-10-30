@@ -1,6 +1,6 @@
 - insert:
     - id: session-groups
-      name: '@local/dsh-session-groups'
+      name: 'dsh-session-group'
       config:
         backend: json
         maxConcurrent: 3

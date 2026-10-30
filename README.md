@@ -93,7 +93,22 @@
 
 历史版本验证覆盖插件加载、原生侧栏注册、严格 RPC、持久化、取消和调用者身份；会话、上传和 UI 数据源使用测试替身，不等于每个旧版都完成了完整浏览器和真实模型端到端验收。更早版本不在兼容范围内。
 
-**本仓库提供源码，安装前需要先构建。** 当前的 `bootstrap:local` 会从一份已安装开发依赖的 Harness 源码中链接依赖，因此请先准备好可运行的 Harness 源码目录。
+### 从 npm 安装
+
+包名为 `dsh-session-group`，版本号由 npm 单独管理，例如 `dsh-session-group@0.2.0`；下载的安装包文件名为 `dsh-session-group-0.2.0.tgz`。npm 包已包含构建产物，无需自行构建。
+
+在 Harness 源码目录执行：
+
+```bash
+pnpm dsh plugin --profile web add dsh-session-group@0.2.0
+pnpm dsh web
+```
+
+已全局安装 `dsh` 时，可省略命令开头的 `pnpm`。也可以把 `.tgz` 文件的绝对路径传给同一条 `plugin add` 命令。
+
+### 从源码安装
+
+**从源码安装前需要先构建。** 当前的 `bootstrap:local` 会从一份已安装开发依赖的 Harness 源码中链接依赖，因此请先准备好可运行的 Harness 源码目录。
 
 以下路径中的 `/absolute/path/to/...` 是占位符，请替换为你本机的实际路径。
 
