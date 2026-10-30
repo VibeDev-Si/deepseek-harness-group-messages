@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <a href="#demo">界面演示</a> ·
   <a href="#features">功能一览</a> ·
   <a href="#installation">安装</a> ·
   <a href="#quick-start">开始群聊</a> ·
@@ -30,6 +31,16 @@
 **DSH 会话群组**是一个 DeepSeek Harness 插件。你可以把同一个 Host 中的原生会话加入群组，像使用社交群聊一样分配工作、共享结果和跟进进度。
 
 群聊从左侧栏进入，在 Harness 的**原生右侧标签页**中打开。主会话仍然保留，每个成员也继续使用自己的原生会话上下文。
+
+<a name="demo"></a>
+
+## 界面演示
+
+以下为本地 Web 界面的 **16:9 完整页面实拍（2400 × 1350）**，演示内容来自独立会话。左侧是原生会话列表，中间保留主会话，右侧展示群列表、群聊和成员任务；点击图片可查看原图。
+
+[![宽屏完整页面：原生主会话与右侧 A→B→A 群聊协作](./assets/readme/group-chat-wide.jpg)](./assets/readme/group-chat-wide.jpg)
+
+<p align="center"><sub>会话 A 发出消息，B 回传“验收完成”，A 确认收到；右侧同时显示成员与任务状态。</sub></p>
 
 适合这些协作场景：
 
@@ -139,6 +150,10 @@ A 收到的就是这段正文。插件不会在正文中附加群名、角色、
 
 设置用于后续新任务，以及你明确重试、继续的任务。每次尝试保存当时的配置，正在执行的任务不会被打断，全局默认模型也不会因此改变。
 
+[![宽屏完整页面：为群成员选择模型、推理等级与权限](./assets/readme/member-settings-wide.jpg)](./assets/readme/member-settings-wide.jpg)
+
+<p align="center"><sub>成员设置在右侧页面中打开，原生主会话继续保留；图中展示模型、Low 推理等级与只读权限。</sub></p>
+
 ### 添加附件与调用指令
 
 从输入框的 **`＋`** 菜单添加文件、图片，或选择目标会话支持的原生指令。也可以粘贴、拖入附件。
@@ -147,6 +162,10 @@ A 收到的就是这段正文。插件不会在正文中附加群名、角色、
 - 图片支持 **PNG、JPEG、WebP、GIF**，群内可预览；模型能否理解图片取决于其原生能力。
 - 调用指令前先选择接收者。指令直接由 Harness 执行，例如查询权限的 `/permission`。
 - 需要按字面发送 `/` 开头的正文时，选择 **作为普通消息**。
+
+[![宽屏完整页面：群内图片预览、文件卡片与下载入口](./assets/readme/attachments-wide.jpg)](./assets/readme/attachments-wide.jpg)
+
+<p align="center"><sub>群内图片与文本附件实拍；演示素材为合成图片和文本文件。</sub></p>
 
 <a name="collaboration"></a>
 
