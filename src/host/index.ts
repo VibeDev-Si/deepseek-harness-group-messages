@@ -11,12 +11,12 @@ import {HarnessAdapter,type HostPorts} from './adapter.ts';
 interface KvUnit {loadAll():Promise<{global:unknown}>;setGlobal(value:unknown):Promise<void>;close():Promise<void>}
 interface TypertPort {register(info:{package:string;face:'host';schemas:never[];invocations:typeof remoteInfo.descriptors;model:{services:never[];events:never[];objects:never[]}}):()=>void}
 interface StoragePort {backend:{get(name:string):{kv?:{open(descriptor:{name:string;version:number;tables:string[];hasGlobal:boolean;layout:'single'}):Promise<KvUnit>}}}}
-interface Invocation {peer:{principal:{kind:string}}}
+interface Invocation {peer:{principal?:{kind:string}}}
 declare module '@deepseek-ai/cordis' {interface Context {sessionGroups:SessionGroupsService}}
 /** Deployment defaults; all group/task data uses an independent Harness storage unit. */
 export interface Config {backend?:string;maxConcurrent?:number}
 export default class SessionGroupsService extends TypertRemoteService {
- static inject=['sessionController','agents','sessionQuery','storage','storage.backend.json','typert','llm','agentDefaultModel','attachments','fileUploads','commands'];
+ static inject=['sessionController','agents','sessionQuery','storage','storage.backend.json','typert','llm','agentDefaultModel'];
  private engine!:GroupEngine;
  private adapter!:HarnessAdapter;
  constructor(ctx:Context,private readonly config:Config={}){super(ctx,'sessionGroups');}
@@ -26,7 +26,7 @@ export default class SessionGroupsService extends TypertRemoteService {
   const unit=await backend.kv.open({name:'session_groups',version:1,tables:[],hasGlobal:true,layout:'single'});
   const get=<K extends keyof HostPorts>(name:K):HostPorts[K]=>this.ctx.get(name) as HostPorts[K];
   const hostCtx=this.ctx;
-  this.adapter=new HarnessAdapter(this.ctx,{sessionController:get('sessionController'),agents:get('agents'),sessionQuery:get('sessionQuery'),llm:get('llm'),agentDefaultModel:get('agentDefaultModel'),attachments:get('attachments'),fileUploads:get('fileUploads'),commands:get('commands'),get permissionPresets(){return hostCtx.get('permissionPresets') as HostPorts['permissionPresets'];}});
+  this.adapter=new HarnessAdapter(this.ctx,{sessionController:get('sessionController'),agents:get('agents'),sessionQuery:get('sessionQuery'),llm:get('llm'),agentDefaultModel:get('agentDefaultModel'),get attachments(){return get('attachments');},get fileUploads(){return get('fileUploads');},get commands(){return get('commands');},get permissionPresets(){return hostCtx.get('permissionPresets') as HostPorts['permissionPresets'];}});
   this.engine=new GroupEngine({load:async()=>(await unit.loadAll()).global,save:value=>unit.setGlobal(value)},this.adapter,max);
   this.adapter.setPeers({send:message=>this.engine.sendFromAgent(message),read:(groupId,memberId)=>this.engine.readForAgent(groupId,memberId)});
   try{await this.engine.initialize();}catch(e){await unit.close();throw e;}
@@ -34,7 +34,14 @@ export default class SessionGroupsService extends TypertRemoteService {
   this.ctx.on('agent/status' as never,(()=>this.engine.kick()) as never);
   this.ctx.effect(()=>async()=>{await this.engine.close();this.adapter.close();await unit.close();},'session-groups: durable lifecycle');
  }
- private owner():void{const invocation=(this.ctx as unknown as {invocation?:Invocation}).invocation;if(invocation&&invocation.peer.principal.kind!=='owner')throw new RemoteError('gateway/bad-request','会话群组仅允许 Host 所有者访问',{});}
+ private owner():void{
+  const invocation=(this.ctx as unknown as {invocation?:Invocation}).invocation;if(!invocation)return;
+  const {peer}=invocation;if(peer.principal?.kind==='owner')return;
+  // DSH 0.1.7/0.2.0 admits all authenticated browser calls through its sole operator.
+  const connection=this.ctx.get('connection') as {operator?:Invocation['peer']}|undefined;
+  if(!('principal' in peer)&&connection?.operator===peer)return;
+  throw new RemoteError('gateway/bad-request','会话群组仅允许 Host 所有者访问',{});
+ }
  /** Read native model, reasoning, permission and slash-command choices. */
  async options(request:{sessionId?:string},signal:AbortSignal):Promise<MemberOptions>{this.owner();signal.throwIfAborted();return this.adapter.options(request.sessionId);}
  /** Read a saved group attachment without publishing a bearer URL or exposing filesystem paths. */
@@ -56,6 +63,6 @@ export default class SessionGroupsService extends TypertRemoteService {
    const rows=(await this.adapter.ports.sessionController.list({},signal)).items;
    const members=request.action==='createGroup'?request.members:[request.member];
    for(const member of members){const row=rows.find(row=>(row.sessionId||row.id)===member.sessionId);if(!row||row.origin==='subagent'||row.parentId)throw new Error('会话不存在，或其生命周期属于子代理，不能直接加入');member.cwd=row.cwd?await realpath(row.cwd).catch(()=>resolve(row.cwd!)):'';}
-  }if(request.action==='configureMember'){const options=await this.adapter.options();const settings=request.settings;const model=settings.model?options.models.find(provider=>provider.id===settings.provider)?.models.find(model=>model.id===settings.model):undefined;if(settings.model&&!model)throw new Error('请选择当前可用的模型');if(settings.reasoningEffort&&!model?.reasoning?.efforts.some(effort=>effort.id===settings.reasoningEffort))throw new Error('推理等级不适用于所选模型');if(settings.permissionPreset&&!options.permissions.some(option=>option.value===settings.permissionPreset))throw new Error('权限预设不可用');}return {...await this.engine.execute(request),capabilityVersion:2};}catch(error){if(error instanceof RemoteError)throw error;throw new RemoteError('gateway/bad-request',error instanceof Error?error.message:String(error),{});}
+  }if(request.action==='configureMember'){const member=this.engine.snapshot().groups.find(group=>group.id===request.groupId)?.members.find(member=>member.id===request.memberId);if(!member)throw new Error('群成员不存在');const options=await this.adapter.options(member.sessionId);const settings=request.settings;const model=settings.model?options.models.find(provider=>provider.id===settings.provider)?.models.find(model=>model.id===settings.model):undefined;if(settings.model&&!model)throw new Error('请选择当前可用的模型');if(settings.reasoningEffort&&!model?.reasoning?.efforts.some(effort=>effort.id===settings.reasoningEffort))throw new Error('推理等级不适用于所选模型');if(settings.permissionPreset&&!options.permissions.some(option=>option.value===settings.permissionPreset))throw new Error('权限预设不可用');}return {...await this.engine.execute(request),capabilityVersion:2};}catch(error){if(error instanceof RemoteError)throw error;throw new RemoteError('gateway/bad-request',error instanceof Error?error.message:String(error),{});}
  }
 }

@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import React from 'react';
+import {ChatMarkdown} from '../src/client/ChatMarkdown.tsx';
+const {renderToStaticMarkup}=createRequire(import.meta.url)('react-dom/server') as {renderToStaticMarkup(element:React.ReactNode):string};
+const render=(text:string)=>renderToStaticMarkup(React.createElement(ChatMarkdown,{text}));
+test('chat results render readable headings, emphasis, lists and code',()=>{const result=render('## 交付\n\n**完成**验证\n\n- 检查接口\n- 返回 `200`\n\n```ts\nconst ready = true\n```');assert.match(result,/<h3>交付<\/h3>/);assert.match(result,/<strong>完成<\/strong>/);assert.match(result,/<ul>/);assert.match(result,/<code>200<\/code>/);assert.match(result,/<pre><code>const ready = true/);});
+test('untrusted raw HTML and JavaScript links never execute in chat bubbles',()=>{const result=render('<script>alert(1)</script>\n\n[run](javascript:alert%281%29)\n\n![tracking](https://example.test/pixel.png)');assert.doesNotMatch(result,/<script>|<img|href="javascript:/);assert.match(result,/&lt;script&gt;/);assert.match(result,/tracking/);});
+test('safe external citations keep their destination and isolate the opener',()=>{const result=render('[evidence](https://example.test/report)');assert.match(result,/href="https:\/\/example.test\/report"/);assert.match(result,/rel="noopener noreferrer"/);});
