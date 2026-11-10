@@ -376,4 +376,5 @@ npm run check:compat -- --harness /absolute/path/to/deepseek-harness
 本 GitHub 仓库采用 [Apache License 2.0](https://github.com/VibeDev-Si/deepseek-harness-group-messages/blob/main/LICENSE)。
 
 - [DSH 插件主题](https://github.com/topics/dsh-plugin)
-- [Awesome DSH Plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
+## Community
+This project has been linked and endorsed by [LINUX DO Community](https://linux.do).
