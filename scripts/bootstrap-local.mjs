@@ -1,5 +1,5 @@
 import {createRequire} from 'node:module';
-import {mkdir,symlink,access,readFile} from 'node:fs/promises';
+import {mkdir,symlink,lstat,readlink,unlink,readFile} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
 const root=resolve(import.meta.dirname,'..');
 const harness=resolve(process.argv[2]||resolve(root,'../deepseek-harness'));
@@ -14,13 +14,19 @@ targets['react-dom']=web.resolve('react-dom/package.json');
 const tsxReq=createRequire(targets.tsx);targets.esbuild=tsxReq.resolve('esbuild/package.json');
 targets['@deepseek-ai/cordis']=resolve(harness,'vendor/cordis/package.json');
 targets['@deepseek-ai/dsh-typert-protocol']=resolve(harness,'packages/typert/protocol/package.json');
-for(const [name,path]of Object.entries(targets)){
- const to=resolve(root,'node_modules',name);
- try{await access(to);}catch{await symlink(dirname(path),to,'dir');}
-}
+for(const [name,path]of Object.entries(targets))await link(resolve(root,'node_modules',name),dirname(path));
 await mkdir(resolve(root,'node_modules/.bin'),{recursive:true});
-for(const [name,path]of [['tsc',resolve(dirname(targets.typescript),'bin/tsc')]]){
- try{await access(resolve(root,'node_modules/.bin',name));}catch{await symlink(path,resolve(root,'node_modules/.bin',name));}
-}
+for(const [name,path]of [['tsc',resolve(dirname(targets.typescript),'bin/tsc')]])await link(resolve(root,'node_modules/.bin',name),path,'file');
 console.log('Local development dependencies linked from',harness);
 console.log('Cordis version:',JSON.parse(await readFile(targets['@deepseek-ai/cordis'],'utf8')).version);
+
+/** A dangling link still passes lstat but fails access(), so only readlink can tell it needs repair. */
+async function link(to,target,type='dir'){
+ const stat=await lstat(to).catch(()=>null);
+ if(stat){
+  if(!stat.isSymbolicLink())return;
+  if(await readlink(to)===target)return;
+  await unlink(to);
+ }
+ await symlink(target,to,type);
+}
