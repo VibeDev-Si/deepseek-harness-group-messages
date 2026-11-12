@@ -74,7 +74,7 @@ export class HarnessAdapter implements SessionAdapter {
     if(event.type==='user/message'){
      const msg=messageOf(event);
      if(msg.source?.rpcId===input.requestId){ownedTurn=activeTurn;admitted=true;if(ownedTurn!==undefined&&!turns.includes(ownedTurn))turns.push(ownedTurn);seqs.push(event.seq);mixed=foreignInputs>0;onStarted?.();requestStop();}
-     else if(msg.source?.kind==='user'){foreignInputs++;if(ownedTurn===activeTurn)mixed=true;}
+     else if(msg.source?.kind==='user'||msg.source?.kind==='retry'){foreignInputs++;if(ownedTurn===activeTurn)mixed=true;}
     }
     if(event.type==='assistant/message'&&ownedTurn!==undefined&&Number(event.data.turn)===ownedTurn){const text=messageText(event);if(text){output+=(output?'\n\n':'')+text;if(output.length>200000)output=output.slice(0,199940)+'\n[输出超过展示上限，请查看原会话]';onProgress(output);}seqs.push(event.seq);}
     if(event.type==='turn/end'){
@@ -95,7 +95,7 @@ export class HarnessAdapter implements SessionAdapter {
      if(!this.available(input.sessionId)){finish('failed','会话刚被其他工作占用，请在空闲后重试');return;}
      await this.ports.sessionController.prompt({sessionId:input.sessionId,requestId:input.requestId,mode:'queue',content:[...(input.prompt?[{type:'text' as const,text:input.prompt}]:[]),...parts]},prepareSignal);
      admitted=true;requestStop();
-    }catch(error){if(settled)return;const code=error&&typeof error==='object'&&'code'in error?String(error.code):'';const definitelyRejected=['session/not-found','session/agent-busy','gateway/bad-request','session/archived','session/attachment-invalid','session/model-unavailable'].includes(code);finish(definitelyRejected?'failed':'uncertain',error instanceof Error?error.message:String(error));}
+    }catch(error){if(settled)return;const code=error&&typeof error==='object'&&'code'in error?String(error.code):'';const definitelyRejected=['session/not-found','session/agent-busy','gateway/bad-request','session/attachment-invalid','session/model-unavailable'].includes(code);finish(definitelyRejected?'failed':'uncertain',error instanceof Error?error.message:String(error));}
    })();
   });
  }
