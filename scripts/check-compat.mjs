@@ -14,7 +14,7 @@ import {build} from 'esbuild';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const args=process.argv.slice(2);let harness=resolve(root,'../deepseek-harness');
 const flag=args.indexOf('--harness');if(flag>=0){harness=resolve(args[flag+1]);args.splice(flag,2);}
-const tags=args.length?args:['dsh-v0.1.7-rc.2','dsh-v0.2.0-rc.2','dsh-v0.2.1-rc.4','dsh-v0.2.2-alpha.2'];
+const tags=args.length?args:['dsh-v0.1.7-rc.2','dsh-v0.2.0-rc.2','dsh-v0.2.1-rc.4','dsh-v0.2.2-alpha.2','dsh-v0.2.2-rc.2'];
 const localRequire=createRequire(join(root,'package.json'));
 const harnessRequire=createRequire(join(harness,'package.json'));
 const builtins=new Set([...builtinModules,...builtinModules.map(name=>'node:'+name)]);
