@@ -102,7 +102,7 @@ async function smoke(runtime,tag){
   vm.runInNewContext(clientCode,sandbox,{filename:'dist/client.js'});assert.ok(browserPlugin?.apply,'Browser bundle did not register');
   pluginFiber=client.plugin(browserPlugin);await pluginFiber;
   const remote=client.get('remote').sessionGroups;assert.ok(remote,'Browser plugin did not mount namespace');
-  const before=await remote.snapshot({});assert.equal(before.ok,true,JSON.stringify(before));assert.equal(before.value.capabilityVersion,2);
+  const before=await remote.snapshot({});assert.equal(before.ok,true,JSON.stringify(before));assert.equal(before.value.capabilityVersion,3);
   const created=await remote.execute({action:'createGroup',commandId:'compat-create',name:'Compatibility '+tag,goal:'',members:[{id:'compat-member',sessionId:'compat-session',alias:'Member',cwd:root}]});assert.equal(created.ok,true,JSON.stringify(created));assert.equal(created.value.groups.length,1);assert.ok(persisted?.groups.length===1);
   const options=await remote.options({});assert.equal(options.ok,true,JSON.stringify(options));assert.ok(Array.isArray(options.value.commands));
   const invalid=await remote.execute({action:'unknown',commandId:'compat-invalid'});assert.equal(invalid.ok,false,'Unknown command unexpectedly accepted');

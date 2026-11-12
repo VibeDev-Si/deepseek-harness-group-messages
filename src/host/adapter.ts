@@ -1,6 +1,7 @@
 /** Harness session adapter: follow exact request identities and never cancel unrelated turns. */
 import type {Context} from '@deepseek-ai/cordis';
-import type {ExecutionInput,ExecutionResult,SessionAdapter,MemberSettings,MemberOptions} from '../core/model.ts';
+import type {ExecutionInput,ExecutionResult,SessionAdapter,MemberSettings,MemberOptions,ModeratorInput,ModeratorPlanResult} from '../core/model.ts';
+import {moderatorPlanResultSchema} from '../core/model.ts';
 import {stageAssets,type AttachmentPorts,type FileReceipt,type PromptAttachment} from './assets.ts';
 import {bindPeerTools,type PeerCallbacks} from './collaboration.ts';
 export interface LogEvent {type:string;seq:number;data:Record<string,unknown>}
@@ -18,6 +19,8 @@ export interface HostPorts {
 }
 export interface SessionRow {sessionId?:string;id?:string;title?:string;displayTitle?:string;cwd?:string;origin?:string;parentId?:string}
 const modelSelectionUnavailable='当前 DSH 版本不支持会话独立模型设置，请在原会话设置模型；群组不会更改全局默认模型。';
+const moderatorSystem='你是群协作的主持人，一个只读规划者。根据协作目标、成员能力与已完成记录，规划下一批任务分配。你没有任何工具，不执行任务、不修改文件、不提升权限、不猜测未提供的信息。只输出一个 JSON 对象，不要输出解释文字或 Markdown 代码块。格式：{"steps":[{"to":"成员别名或ID","instruction":"派发给该成员的原文任务指令","dependsOn":可选的先前步骤序号(从0开始)}],"finish":目标是否已达成(布尔),"rationale":"简短理由"}。steps 最多 16 项，被依赖的步骤必须排在前面；指令要具体、可独立执行。不要重复已完成的任务。若目标已达成或无需更多任务，返回 {"steps":[],"finish":true}。';
+const extractJson=(text:string):unknown=>{const start=text.indexOf('{');const end=text.lastIndexOf('}');if(start<0||end<start)throw new Error('主持人未返回 JSON 规划，可重试。');return JSON.parse(text.slice(start,end+1));};
 const messageOf=(event:LogEvent):Message=>event.data as unknown as Message;
 const messageText=(event:LogEvent):string=>{const m=event.data.message as Message|undefined;return (m?.content||[]).filter(p=>p.type==='text').map(p=>p.text||'').join('');};
 export class HarnessAdapter implements SessionAdapter {
@@ -109,6 +112,12 @@ export class HarnessAdapter implements SessionAdapter {
   for await(const chunk of this.ports.llm.stream({...selection,system:'你是只读协作总结助手。仅根据给出的执行记录归纳目标、有效交付、分歧、失败和下一步。保留 task、session、turn、seq 来源。不要把撤回、取消、失败或缺失结果视为已完成。没有证据时明确说明。你没有工具，不执行任何任务。使用中文 Markdown。',messages:[{role:'user',content:[{type:'text',text:report.slice(0,100000)}]}],tools:[],maxTokens:6000,signal})){if(chunk.type==='text-delta')text+=chunk.text||'';}
   if(!text.trim())throw new Error('模型未返回总结正文；结构化执行记录已保留，可重试总结。');
   return text+(report.length>100000?'\n\n> 模型输入受长度限制，部分记录未进入 AI 提炼；请结合以下执行记录核对。':'')+'\n\n---\n\n'+report;
+ }
+ async plan(input:ModeratorInput,signal:AbortSignal):Promise<ModeratorPlanResult>{
+  const selection=input.model??this.ports.agentDefaultModel.currentSelection();let text='';
+  for await(const chunk of this.ports.llm.stream({...selection,system:moderatorSystem,messages:[{role:'user',content:[{type:'text',text:JSON.stringify(input).slice(0,100000)}]}],tools:[],maxTokens:4000,signal})){if(chunk.type==='text-delta')text+=chunk.text||'';}
+  if(!text.trim())throw new Error('模型未返回规划；可重试。');
+  return moderatorPlanResultSchema.parse(extractJson(text));
  }
  close():void{this.closed=true;this.prepareLife.abort();for(const fn of [...this.disposers])fn();this.disposers.clear();}
 }

@@ -8,15 +8,21 @@ export const assetSchema=z.object({id,kind:z.enum(['image','file']),name:z.strin
 export const assetsSchema=z.array(assetSchema).max(8).refine(items=>items.reduce((n,item)=>n+item.bytes,0)<=25*1024*1024,'附件总大小最多 25 MB');
 export const memberSchema=z.object({id,sessionId:id,alias:z.string().trim().min(1).max(32),cwd:z.string().max(4096).default(''),settings:memberSettingsSchema.optional()});
 export const collaborationSchema=z.object({enabled:z.boolean(),maxMessages:z.number().int().min(1).max(30)}).strict();
+export const modelSelectionSchema=z.object({provider:z.string(),model:z.string(),reasoningEffort:z.string().optional()});
+export const moderatorSchema=z.object({enabled:z.boolean(),mode:z.enum(['suggest','auto']),maxSteps:z.number().int().min(1).max(20),model:modelSelectionSchema.optional()}).strict();
+export const planStepSchema=z.object({id,to:id,instruction:text,dependsOn:id.optional(),status:z.enum(['proposed','approved','rejected','dispatched'])}).strict();
+export const moderatorPlanSchema=z.object({id,createdAt:z.number(),basedOnRevision:z.number(),trigger:z.object({messageId:id.optional(),taskId:id.optional()}).optional(),steps:z.array(planStepSchema).max(16),finish:z.boolean().optional(),rationale:text.optional()}).strict();
+export const roundModeratorSchema=z.object({steps:z.number().int().nonnegative(),status:z.enum(['idle','planning','awaiting_approval','halted','failed']),plan:moderatorPlanSchema.optional(),error:text.optional()}).strict();
+export const moderatorPlanResultSchema=z.object({steps:z.array(z.object({to:z.string().min(1).max(160),instruction:z.string().min(1).max(20_000),dependsOn:z.number().int().nonnegative().optional()}).strict()).max(16),finish:z.boolean().optional(),rationale:z.string().max(4000).optional()}).strict();
 export const statusSchema=z.enum(['queued','dispatching','running','stopping','paused','completed','cancelled','failed','uncertain']);
 export const attemptSchema=z.object({id,requestId:id,status:statusSchema,output:text,turns:z.array(z.number().int()),eventSeqs:z.array(z.number().int()),startedAt:z.number(),settings:memberSettingsSchema.optional(),endedAt:z.number().optional(),error:text.optional()});
-export const taskSchema=z.object({id,roundId:id,messageId:id,memberId:id,sessionId:id,alias:z.string(),cwd:z.string(),prompt:text,kind:z.enum(['prompt','command']).optional(),assets:assetsSchema.optional(),settings:memberSettingsSchema.optional(),senderMemberId:id.optional(),status:statusSchema,attempts:z.array(attemptSchema),control:z.enum(['pause','cancel']).optional(),error:text.optional(),createdAt:z.number()});
-export const messageSchema=z.object({id,roundId:id,author:z.string(),body:text,mentions:z.array(id),quoteTaskId:id.optional(),senderMemberId:id.optional(),relayOfTaskId:id.optional(),kind:z.enum(['prompt','command']).optional(),assets:assetsSchema.optional(),withdrawnAt:z.number().optional(),createdAt:z.number()});
+export const taskSchema=z.object({id,roundId:id,messageId:id,memberId:id,sessionId:id,alias:z.string(),cwd:z.string(),prompt:text,kind:z.enum(['prompt','command']).optional(),assets:assetsSchema.optional(),settings:memberSettingsSchema.optional(),senderMemberId:id.optional(),dependsOn:id.optional(),status:statusSchema,attempts:z.array(attemptSchema),control:z.enum(['pause','cancel']).optional(),error:text.optional(),createdAt:z.number()});
+export const messageSchema=z.object({id,roundId:id,author:z.string(),body:text,mentions:z.array(id),quoteTaskId:id.optional(),senderMemberId:id.optional(),relayOfTaskId:id.optional(),moderatorOf:z.object({planId:id,stepId:id}).optional(),kind:z.enum(['prompt','command']).optional(),assets:assetsSchema.optional(),withdrawnAt:z.number().optional(),createdAt:z.number()});
 export const reportSchema=z.object({status:z.enum(['generating','completed','failed']),kind:z.enum(['structured','ai']),content:text,sourceRevision:z.number(),createdAt:z.number(),error:text.optional()});
 export const draftSchema=z.object({body:text,memberIds:z.array(id),assets:assetsSchema.optional(),kind:z.enum(['prompt','command']).optional()});
-export const roundSchema=z.object({id,number:z.number(),status:z.enum(['active','pausing','paused','closing','summarizing','completed']),messages:z.array(messageSchema),tasks:z.array(taskSchema),report:reportSchema.optional(),relayCount:z.number().int().nonnegative().optional(),rewindOf:z.object({roundId:id,messageId:id}).optional(),draft:draftSchema.optional(),createdAt:z.number()});
-export const groupSchema=z.object({id,name:z.string().min(1).max(80),goal:z.string().max(4000),archived:z.boolean(),members:z.array(memberSchema),collaboration:collaborationSchema.optional(),rounds:z.array(roundSchema),createdAt:z.number()});
-export const snapshotSchema=z.object({formatVersion:z.literal(1),capabilityVersion:z.literal(2).optional(),revision:z.number().int().nonnegative(),groups:z.array(groupSchema),commands:z.array(id)});
+export const roundSchema=z.object({id,number:z.number(),status:z.enum(['active','pausing','paused','closing','summarizing','completed']),messages:z.array(messageSchema),tasks:z.array(taskSchema),report:reportSchema.optional(),relayCount:z.number().int().nonnegative().optional(),moderator:roundModeratorSchema.optional(),rewindOf:z.object({roundId:id,messageId:id}).optional(),draft:draftSchema.optional(),createdAt:z.number()});
+export const groupSchema=z.object({id,name:z.string().min(1).max(80),goal:z.string().max(4000),archived:z.boolean(),members:z.array(memberSchema),collaboration:collaborationSchema.optional(),moderator:moderatorSchema.optional(),rounds:z.array(roundSchema),createdAt:z.number()});
+export const snapshotSchema=z.object({formatVersion:z.literal(1),capabilityVersion:z.union([z.literal(2),z.literal(3)]).optional(),revision:z.number().int().nonnegative(),groups:z.array(groupSchema),commands:z.array(id)});
 export type Member=z.infer<typeof memberSchema>;
 export type MemberSettings=z.infer<typeof memberSettingsSchema>;
 export type Asset=z.infer<typeof assetSchema>;
@@ -25,6 +31,11 @@ export type Attempt=z.infer<typeof attemptSchema>;
 export type Round=z.infer<typeof roundSchema>;
 export type Group=z.infer<typeof groupSchema>;
 export type Snapshot=z.infer<typeof snapshotSchema>;
+export type ModeratorConfig=z.infer<typeof moderatorSchema>;
+export type PlanStep=z.infer<typeof planStepSchema>;
+export type ModeratorPlan=z.infer<typeof moderatorPlanSchema>;
+export type RoundModerator=z.infer<typeof roundModeratorSchema>;
+export type ModeratorPlanResult=z.infer<typeof moderatorPlanResultSchema>;
 const base={commandId:id,groupId:id};
 export const commandSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('createGroup'),commandId:id,name:z.string().trim().min(1).max(80),goal:z.string().max(4000).default(''),members:z.array(memberSchema).min(1).max(16)}).strict(),
@@ -46,9 +57,13 @@ export const commandSchema=z.discriminatedUnion('action',[
  z.object({...base,action:z.literal('newRound')}).strict(),
  z.object({...base,action:z.literal('archive')}).strict(),
  z.object({...base,action:z.literal('retrySummary')}).strict(),
+ z.object({...base,action:z.literal('configureModerator'),options:moderatorSchema,autoAcknowledged:z.boolean().optional()}).strict(),
+ z.object({...base,action:z.literal('planRound'),roundId:id.optional()}).strict(),
+ z.object({...base,action:z.literal('approvePlan'),planId:id,stepIds:z.array(id).max(16)}).strict(),
+ z.object({...base,action:z.literal('rejectPlan'),planId:id}).strict(),
+ z.object({...base,action:z.literal('stopModerator')}).strict(),
 ]);
 export type Command=z.infer<typeof commandSchema>;
-export const modelSelectionSchema=z.object({provider:z.string(),model:z.string(),reasoningEffort:z.string().optional()});
 const modelSchema=z.object({id:z.string(),name:z.string(),description:z.string().optional(),reasoning:z.object({efforts:z.array(z.object({id:z.string(),name:z.string(),description:z.string().optional()})),defaultEffort:z.string().optional()}).optional()});
 export const memberOptionsSchema=z.object({models:z.array(z.object({id:z.string(),name:z.string(),models:z.array(modelSchema)})),defaultModel:modelSelectionSchema,currentModel:modelSelectionSchema.optional(),permissions:z.array(z.object({value:z.string(),name:z.string(),description:z.string().optional()})),currentPermission:z.string().optional(),commands:z.array(z.object({name:z.string(),description:z.string(),input:z.object({hint:z.string(),attachments:z.boolean().optional()}).optional()})),failures:z.array(z.object({id:z.string(),message:z.string()})).optional()});
 export type MemberOptions=z.infer<typeof memberOptionsSchema>;
@@ -59,10 +74,12 @@ export interface PeerContext{groupId:string;roundId:string;taskId:string;memberI
 export interface ExecutionInput{sessionId:string;requestId:string;prompt:string;kind?:'prompt'|'command';assets?:Asset[];settings?:MemberSettings;peer?:PeerContext}
 export interface ExecutionResult{status:'completed'|'cancelled'|'failed'|'uncertain';output:string;turns:number[];eventSeqs:number[];error?:string}
 export interface AgentMessage{assetIds?:string[];groupId:string;roundId:string;taskId:string;sourceMemberId:string;requestId:string;callId:string;recipients:string[];text:string}
+export interface ModeratorInput{goal:string;mode:'suggest'|'auto';members:{id:string;alias:string;cwd:string;model?:string;permission?:string}[];transcript:string;remainingSteps:number;model?:{provider:string;model:string;reasoningEffort?:string}}
 export interface SessionAdapter{
  available(sessionId:string):boolean;
  execute(input:ExecutionInput,signal:AbortSignal,onProgress:(output:string)=>void,onStarted?:()=>void):Promise<ExecutionResult>;
  summarize?(report:string,signal:AbortSignal):Promise<string>;
+ plan?(input:ModeratorInput,signal:AbortSignal):Promise<ModeratorPlanResult>;
  forkAt?(sessionId:string,atSeq:number):Promise<string>;
 }
 export interface Persistence{load():Promise<unknown>;save(snapshot:Snapshot):Promise<void>}

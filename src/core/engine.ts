@@ -1,6 +1,6 @@
 /** Host-owned serialized persistence, task queue, cancellation and collaboration rounds. */
 import {createHash,randomUUID} from 'node:crypto';
-import {type Snapshot,type Group,type Round,type Task,type Member,type Command,type Persistence,type SessionAdapter,type ExecutionResult,type ExecutionInput,type Asset,type AgentMessage,commandSchema,snapshotSchema,initialSnapshot,currentRound,isTerminal} from './model.ts';
+import {type Snapshot,type Group,type Round,type Task,type Member,type Command,type Persistence,type SessionAdapter,type ExecutionResult,type ExecutionInput,type Asset,type AgentMessage,type ModeratorInput,type ModeratorPlan,type PlanStep,commandSchema,snapshotSchema,initialSnapshot,currentRound,isTerminal} from './model.ts';
 import {buildReport} from './report.ts';
 const id=()=>randomUUID();
 const errorText=(e:unknown)=>e instanceof Error?e.message:String(e);
@@ -14,11 +14,12 @@ export class GroupEngine {
  private closed=false;
  private fatal:string|undefined;
  private readonly summaries=new Map<string,AbortController>();
+ private readonly moderating=new Map<string,AbortController>();
  constructor(private readonly persistence:Persistence,private readonly adapter:SessionAdapter,private readonly maxConcurrent=3){}
  async initialize():Promise<void>{
   const stored=await this.persistence.load();
   this.state=stored===null||stored===undefined?initialSnapshot():snapshotSchema.parse(stored);
-  await this.mutate(state=>{for(const g of state.groups)for(const r of g.rounds){for(const t of r.tasks){if(['dispatching','running','stopping'].includes(t.status)){t.status='uncertain';t.error='Host 或插件重新加载，需核对原会话后再决定是否重新派发。';const a=t.attempts.at(-1);if(a)a.status='uncertain';}}if(r.status==='pausing')r.status='paused';if(r.status==='summarizing'){r.report={status:'failed',kind:'structured',content:r.report?.content||buildReport(g,r),sourceRevision:state.revision,createdAt:Date.now(),error:'总结在 Host 重新加载时中断，可只重试总结。'};}}});
+  await this.mutate(state=>{for(const g of state.groups)for(const r of g.rounds){for(const t of r.tasks){if(['dispatching','running','stopping'].includes(t.status)){t.status='uncertain';t.error='Host 或插件重新加载，需核对原会话后再决定是否重新派发。';const a=t.attempts.at(-1);if(a)a.status='uncertain';}}if(r.status==='pausing')r.status='paused';if(r.status==='summarizing'){r.report={status:'failed',kind:'structured',content:r.report?.content||buildReport(g,r),sourceRevision:state.revision,createdAt:Date.now(),error:'总结在 Host 重新加载时中断，可只重试总结。'};}if(r.moderator?.status==='planning'){r.moderator.status='failed';r.moderator.error='规划在 Host 重新加载时中断，可重试。';}}});
   this.schedule();
  }
  snapshot():Snapshot{return structuredClone(this.state);}
@@ -31,7 +32,7 @@ export class GroupEngine {
  private group(state:Snapshot,groupId:string):Group{const g=state.groups.find(g=>g.id===groupId);if(!g)throw new Error('群组不存在');if(g.archived)throw new Error('群组已归档');return g;}
  async execute(raw:unknown):Promise<Snapshot>{
   if(this.closed)throw new Error('群组服务已停止');
-  const command=commandSchema.parse(raw);const toAbort=new Set<string>();
+  const command=commandSchema.parse(raw);const toAbort=new Set<string>();let stopModeratorRound:string|undefined;let planTarget:{groupId:string;roundId:string}|undefined;
   await this.mutate(async state=>{
    if(state.commands.includes(command.commandId))return;
    if(command.action==='createGroup'){
@@ -63,6 +64,7 @@ export class GroupEngine {
       if(r.tasks.some(task=>!isTerminal(task))||['closing','summarizing'].includes(r.status))throw new Error('请先结束或取消本轮未完成任务，再回退对话');
       const sourceRound=command.roundId?g.rounds.find(round=>round.id===command.roundId):r;if(!sourceRound)throw new Error('协作轮次不存在');
       let cut=sourceRound.messages.findIndex(message=>message.id===command.messageId);if(cut<0)throw new Error('消息不存在');let anchor=sourceRound.messages[cut];const visited=new Set<string>();while(anchor.senderMemberId&&anchor.relayOfTaskId){if(visited.has(anchor.id))throw new Error('互聊来源链不完整');visited.add(anchor.id);const parent=sourceRound.tasks.find(task=>task.id===anchor.relayOfTaskId);const index=parent?sourceRound.messages.findIndex(message=>message.id===parent.messageId):-1;if(index<0)throw new Error('互聊来源不在当前轮次，请选择用户请求回退');cut=index;anchor=sourceRound.messages[index];}
+      const moderatorOf=anchor.moderatorOf;if(moderatorOf){const plan=g.rounds.map(round=>round.moderator?.plan).find(p=>p?.id===moderatorOf.planId);const triggerId=plan?.trigger?.messageId;const index=triggerId?sourceRound.messages.findIndex(message=>message.id===triggerId):-1;if(index<0)throw new Error('主持人来源不在当前轮次，请选择用户请求回退');cut=index;anchor=sourceRound.messages[index];}
       const sourceIndex=g.rounds.indexOf(sourceRound);const afterIds=new Set(sourceRound.messages.slice(cut).map(message=>message.id));const plans=new Map<string,{sessionId:string;seq:number}>();
       const affected=g.rounds.slice(sourceIndex).flatMap((round,index)=>round.tasks.filter(task=>index>0||afterIds.has(task.messageId)));
       if(affected.some(task=>!isTerminal(task)))throw new Error('请先处理相关轮次中未结束的任务');
@@ -86,15 +88,22 @@ export class GroupEngine {
      case 'newRound':if(r.status!=='completed')throw new Error('请先结束当前轮次');g.rounds.push(blankRound(r.number+1));break;
      case 'archive':if(r.tasks.some(t=>!isTerminal(t))||r.status==='summarizing')throw new Error('仍有未结束执行，不能归档');g.archived=true;break;
      case 'retrySummary':if(!r.report||r.report.status!=='failed')throw new Error('总结没有失败');r.status='closing';delete r.report;break;
+     case 'configureModerator':{if(command.options.enabled&&command.options.mode==='auto'&&g.moderator?.mode!=='auto'&&!command.autoAcknowledged)throw new Error('启用自动主持人前请确认风险提示');g.moderator=command.options;if(command.options.enabled){r.moderator??={steps:0,status:'idle'};}else if(r.moderator){r.moderator.status='halted';stopModeratorRound=r.id;}break;}
+     case 'planRound':{if(!g.moderator?.enabled)throw new Error('请先在群详情启用主持人');if(command.roundId&&command.roundId!==r.id)throw new Error('协作轮次已改变，请重新规划');if(r.status!=='active')throw new Error('本轮当前不接收规划');planTarget={groupId:g.id,roundId:r.id};break;}
+     case 'approvePlan':{const rm=r.moderator;if(!rm?.plan||rm.status!=='awaiting_approval')throw new Error('没有待批准的规划');if(rm.plan.id!==command.planId)throw new Error('规划已更新，请重新查看');this.dispatchPlan(g,r,rm.plan,command.stepIds);rm.status='idle';break;}
+     case 'rejectPlan':{const rm=r.moderator;if(!rm?.plan||rm.status!=='awaiting_approval')throw new Error('没有待批准的规划');if(rm.plan.id!==command.planId)throw new Error('规划已更新，请重新查看');for(const step of rm.plan.steps)if(step.status==='proposed')step.status='rejected';rm.status='idle';break;}
+     case 'stopModerator':{if(r.moderator){r.moderator.status='halted';stopModeratorRound=r.id;}break;}
     }
    }
    state.commands.push(command.commandId);
    if(state.commands.length>2000)state.commands.splice(0,state.commands.length-2000);
   });
   for(const taskId of toAbort)this.running.get(taskId)?.abort.abort();
+  if(stopModeratorRound)this.moderating.get(stopModeratorRound)?.abort();
+  if(planTarget)void this.planRound(planTarget.groupId,planTarget.roundId);
   this.schedule();return this.snapshot();
  }
- private appendMessage(g:Group,r:Round,input:{body:string;memberIds:string[];assets?:Asset[];kind?:'prompt'|'command';quoteTaskId?:string;relayOfTaskId?:string;senderMemberId?:string}):string{
+ private appendMessage(g:Group,r:Round,input:{body:string;memberIds:string[];assets?:Asset[];kind?:'prompt'|'command';quoteTaskId?:string;relayOfTaskId?:string;senderMemberId?:string;moderatorOf?:{planId:string;stepId:string}}):string{
   if(r.status!=='active')throw new Error('本轮当前不接收任务');
   if(input.body.length>20000)throw new Error('消息超过 20000 字符，请编辑后发送');
   if(!input.body.trim()&&!input.assets?.length)throw new Error('消息或附件不能为空');
@@ -103,7 +112,7 @@ export class GroupEngine {
   const recipients=[...new Set(input.memberIds)].map(memberId=>{const member=g.members.find(member=>member.id===memberId);if(!member)throw new Error('接收者已失效，请重新选择');return member;});
   if(input.kind==='command'&&!recipients.length)throw new Error('调用指令时请选择目标会话');
   const sender=input.senderMemberId?g.members.find(member=>member.id===input.senderMemberId):undefined;
-  const messageId=id();r.messages.push({id:messageId,roundId:r.id,author:sender?.alias||'user',body:input.body,mentions:recipients.map(member=>member.id),createdAt:Date.now(),...(input.assets?.length?{assets:input.assets}:{}),...(input.kind?{kind:input.kind}:{}),...(input.quoteTaskId?{quoteTaskId:input.quoteTaskId}:{}),...(input.relayOfTaskId?{relayOfTaskId:input.relayOfTaskId}:{}),...(sender?{senderMemberId:sender.id}:{})});
+  const messageId=id();r.messages.push({id:messageId,roundId:r.id,author:input.moderatorOf?'主持人':(sender?.alias||'user'),body:input.body,mentions:recipients.map(member=>member.id),createdAt:Date.now(),...(input.assets?.length?{assets:input.assets}:{}),...(input.kind?{kind:input.kind}:{}),...(input.quoteTaskId?{quoteTaskId:input.quoteTaskId}:{}),...(input.relayOfTaskId?{relayOfTaskId:input.relayOfTaskId}:{}),...(input.moderatorOf?{moderatorOf:input.moderatorOf}:{}),...(sender?{senderMemberId:sender.id}:{})});
   delete r.draft;
   for(const member of recipients)r.tasks.push({id:id(),roundId:r.id,messageId,memberId:member.id,sessionId:member.sessionId,alias:member.alias,cwd:member.cwd,prompt:input.body,status:'queued',attempts:[],createdAt:Date.now(),...(input.kind?{kind:input.kind}:{}),...(input.assets?.length?{assets:input.assets}:{}),...(member.settings?{settings:structuredClone(member.settings)}:{}),...(sender?{senderMemberId:sender.id}:{})});
   return messageId;
@@ -143,7 +152,13 @@ export class GroupEngine {
   for(const g of this.state.groups){if(g.archived)continue;const r=currentRound(g);
    if(r.status==='closing'&&r.tasks.every(isTerminal)&&!this.summaries.has(r.id)){void this.summarize(g.id,r.id);continue;}
    if(!['active','closing'].includes(r.status))continue;
-   for(const t of r.tasks){if(this.running.size>=this.maxConcurrent)break;if(t.status!=='queued'||this.running.has(t.id)||!this.adapter.available(t.sessionId))continue;if([...this.running.values()].some(x=>x.sessionId===t.sessionId||(t.cwd&&x.cwd===t.cwd)))continue;
+   const mod=g.moderator,rm=r.moderator;
+   if(mod?.enabled&&mod.mode==='auto'&&rm&&r.status==='active'&&!this.moderating.has(r.id)&&!['halted','failed','planning'].includes(rm.status)){
+    const active=r.tasks.some(t=>!isTerminal(t));const blocked=r.tasks.some(t=>t.status==='uncertain'||t.status==='failed');const exhausted=rm.steps>=mod.maxSteps;
+    if(blocked||(!active&&(exhausted||rm.plan?.finish))){const reason=blocked?'存在待确认或失败任务，自动主持人已停止，请核对原会话。':exhausted?'本轮自动规划步数已用完。':undefined;void this.mutate(state=>{const rr=currentRound(this.group(state,g.id));if(rr.moderator&&rr.moderator.status!=='halted'){rr.moderator.status='halted';if(reason)rr.moderator.error=reason;}});continue;}
+    if(!active&&r.tasks.length>0){void this.planRound(g.id,r.id);continue;}
+   }
+   for(const t of r.tasks){if(this.running.size>=this.maxConcurrent)break;if(t.status!=='queued'||this.running.has(t.id)||!this.adapter.available(t.sessionId))continue;if(t.dependsOn){const dep=r.tasks.find(x=>x.id===t.dependsOn);if(!dep||dep.status!=='completed')continue;}if([...this.running.values()].some(x=>x.sessionId===t.sessionId||(t.cwd&&x.cwd===t.cwd)))continue;
     const abort=new AbortController();this.running.set(t.id,{sessionId:t.sessionId,cwd:t.cwd,abort});
     try{let input:ExecutionInput|undefined;await this.mutate(state=>{const draft=this.group(state,g.id);const round=currentRound(draft);const task=round.tasks.find(x=>x.id===t.id);if(!task||task.status!=='queued'||!['active','closing'].includes(round.status))return;const requestId=id();task.attempts.push({id:id(),requestId,status:'dispatching',output:'',turns:[],eventSeqs:[],startedAt:Date.now(),...(task.settings?{settings:structuredClone(task.settings)}:{})});task.status='dispatching';delete task.error;input={sessionId:task.sessionId,requestId,prompt:round.messages.find(message=>message.id===task.messageId)?.body??task.prompt,...(task.kind?{kind:task.kind}:{}),...(task.assets?{assets:task.assets}:{}),...(task.settings?{settings:task.settings}:{}),...(draft.collaboration?.enabled?{peer:{groupId:draft.id,roundId:round.id,taskId:task.id,memberId:task.memberId,alias:task.alias,...(task.senderMemberId?{senderAlias:round.messages.find(message=>message.id===task.messageId)?.author}:{}),members:draft.members.map(member=>({id:member.id,alias:member.alias,sessionId:member.sessionId}))}}:{})};});if(!input){this.running.delete(t.id);continue;}void this.run(g.id,r.id,t.id,input,abort);}catch(e){this.running.delete(t.id);throw e;}
    }
@@ -166,5 +181,47 @@ export class GroupEngine {
    await this.mutate(state=>{const r=this.group(state,groupId).rounds.find(r=>r.id===roundId)!;r.status='completed';r.report={...r.report!,status:'completed',kind:this.adapter.summarize?'ai':'structured',content:content.length>200000?content.slice(0,199900)+'\n[总结超过展示上限，完整结果请查看本轮任务及原会话。]':content};});
   }catch(e){if(this.closed)return;await this.mutate(state=>{const r=this.group(state,groupId).rounds.find(r=>r.id===roundId)!;r.report={status:'failed',kind:'structured',content:r.report?.content||'',sourceRevision:state.revision,createdAt:Date.now(),error:errorText(e)};}).catch(()=>{});}finally{this.summaries.delete(roundId);}
  }
- async close():Promise<void>{this.closed=true;for(const abort of this.summaries.values())abort.abort();await this.chain;this.listeners.clear();}
+ private dispatchPlan(g:Group,r:Round,plan:ModeratorPlan,stepIds:string[]):void{
+  const stepToTask=new Map<string,string>();
+  for(const step of plan.steps){
+   if(!stepIds.includes(step.id)){if(step.status==='proposed')step.status='rejected';continue;}
+   const member=g.members.find(m=>m.id===step.to);if(!member){step.status='rejected';continue;}
+   const before=r.tasks.length;
+   this.appendMessage(g,r,{body:step.instruction,memberIds:[member.id],moderatorOf:{planId:plan.id,stepId:step.id}});
+   const task=r.tasks[before];
+   if(task){if(step.dependsOn){const dep=stepToTask.get(step.dependsOn);if(dep)task.dependsOn=dep;}stepToTask.set(step.id,task.id);}
+   step.status='dispatched';
+  }
+ }
+ /** Read-only moderator planning: propose assignments, then gate (suggest) or dispatch within budget (auto). */
+ private async planRound(groupId:string,roundId:string):Promise<void>{
+  if(this.closed||this.moderating.has(roundId))return;
+  const abort=new AbortController();this.moderating.set(roundId,abort);
+  let input:ModeratorInput|undefined;let basedOnRevision=0;let trigger:{messageId:string}|undefined;
+  try{
+   await this.mutate(state=>{
+    const g=this.group(state,groupId);const r=g.rounds.find(round=>round.id===roundId);if(!r)throw new Error('协作轮次不存在');
+    if(r.status!=='active')throw new Error('本轮当前不接收规划');if(!g.moderator?.enabled)throw new Error('主持人未启用');
+    const rm=r.moderator??={steps:0,status:'idle'};if(rm.status==='planning')throw new Error('正在规划');if(rm.steps>=g.moderator.maxSteps)throw new Error('本轮自动规划步数已用完');
+    rm.status='planning';delete rm.error;basedOnRevision=state.revision;
+    const lastUser=[...r.messages].reverse().find(message=>!message.senderMemberId&&!message.moderatorOf);if(lastUser)trigger={messageId:lastUser.id};
+    input={goal:g.goal,mode:g.moderator.mode,members:g.members.map(member=>({id:member.id,alias:member.alias,cwd:member.cwd,...(member.settings?.model?{model:member.settings.model}:{}),...(member.settings?.permissionPreset?{permission:member.settings.permissionPreset}:{})})),transcript:buildReport(g,r),remainingSteps:g.moderator.maxSteps-rm.steps,...(g.moderator.model?{model:g.moderator.model}:{})};
+   });
+   if(!input)return;if(!this.adapter.plan)throw new Error('当前部署不支持主持人规划');
+   const result=await this.adapter.plan(input,abort.signal);if(this.closed)return;
+   await this.mutate(state=>{
+    const g=this.group(state,groupId);const r=g.rounds.find(round=>round.id===roundId)!;const rm=r.moderator!;
+    if(!g.moderator?.enabled||r.status!=='active'){rm.status='halted';return;}
+    const ids=result.steps.map(()=>id());const indexToId=new Map<number,string>();const steps:PlanStep[]=[];
+    result.steps.forEach((s,i)=>{const member=g.members.find(m=>m.id===s.to||m.alias===s.to);if(!member)return;indexToId.set(i,ids[i]);steps.push({id:ids[i],to:member.id,instruction:s.instruction,status:'proposed'});});
+    result.steps.forEach((s,i)=>{const stepId=indexToId.get(i);if(stepId&&s.dependsOn!=null&&s.dependsOn<i){const dep=indexToId.get(s.dependsOn);const step=steps.find(x=>x.id===stepId);if(step&&dep)step.dependsOn=dep;}});
+    const plan:ModeratorPlan={id:id(),createdAt:Date.now(),basedOnRevision,steps,...(result.finish?{finish:true}:{}),...(result.rationale?{rationale:result.rationale}:{}),...(trigger?{trigger}:{})};
+    rm.steps++;rm.plan=plan;
+    if(g.moderator.mode==='auto'){this.dispatchPlan(g,r,plan,steps.map(s=>s.id));if(!steps.length&&!plan.finish){rm.status='halted';rm.error='主持人没有给出可执行分配，已停止。';}else rm.status='idle';}
+    else rm.status='awaiting_approval';
+   });
+  }catch(e){if(this.closed)return;await this.mutate(state=>{const r=this.group(state,groupId).rounds.find(round=>round.id===roundId);if(r?.moderator){r.moderator.status='failed';r.moderator.error=errorText(e);}}).catch(()=>{});}
+  finally{this.moderating.delete(roundId);this.schedule();}
+ }
+ async close():Promise<void>{this.closed=true;for(const abort of this.summaries.values())abort.abort();for(const abort of this.moderating.values())abort.abort();await this.chain;this.listeners.clear();}
 }
