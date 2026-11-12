@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="./package.json"><img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-007AFF?style=flat-square" /></a>
+  <a href="./package.json"><img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-007AFF?style=flat-square" /></a>
   <a href="#installation"><img alt="Node.js 24+" src="https://img.shields.io/badge/Node.js-24%2B-339933?style=flat-square" /></a>
   <a href="#installation"><img alt="DSH Web plugin" src="https://img.shields.io/badge/DSH-Web_plugin-365FD4?style=flat-square" /></a>
   <a href="https://github.com/VibeDev-Si/deepseek-harness-group-messages/blob/main/LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-586069?style=flat-square" /></a>
@@ -22,6 +22,7 @@
   <a href="#installation">安装</a> ·
   <a href="#quick-start">开始群聊</a> ·
   <a href="#collaboration">会话协作</a> ·
+  <a href="#moderator">自动主持人</a> ·
   <a href="#conversation-controls">消息回退</a> ·
   <a href="#faq">常见问题</a>
 </p>
@@ -56,6 +57,7 @@
 | **工作区组群** | 按实际工作区选择已有会话，支持跨工作区选择、群内别名和新建原生会话。 |
 | **@ 原文派发** | 选择一个或多个接收者，发送输入框正文，保留空格与换行。 |
 | **成员互聊** | 显式开启后，成员可通过群工具向其他会话投递消息、读取本轮共享信息。 |
+| **自动主持人** | 只读规划本轮分工：建议模式人工批准后派发，自动模式在步数预算内自主派发并重新规划。 |
 | **成员独立配置** | 分别选择模型、推理等级与权限预设，保留每次执行时的配置。 |
 | **文件与图片** | 添加、粘贴或拖入附件，在群内预览图片、下载文件。 |
 | **原生指令** | 从目标会话的指令列表选择 `/` 指令，交给 Harness 指令服务执行。 |
@@ -96,12 +98,12 @@
 
 ### 从 npm 安装
 
-包名为 `dsh-session-group`，版本号由 npm 单独管理，例如 `dsh-session-group@0.2.0`；下载的安装包文件名为 `dsh-session-group-0.2.0.tgz`。npm 包已包含构建产物，无需自行构建。
+包名为 `dsh-session-group`，版本号由 npm 单独管理，例如 `dsh-session-group@0.3.0`；下载的安装包文件名为 `dsh-session-group-0.3.0.tgz`。npm 包已包含构建产物，无需自行构建。
 
 在 Harness 源码目录执行：
 
 ```bash
-pnpm dsh plugin --profile web add dsh-session-group@0.2.0
+pnpm dsh plugin --profile web add dsh-session-group@0.3.0
 pnpm dsh web
 ```
 
@@ -262,6 +264,36 @@ group_send({
 - 普通回复中的 `@B` 不会自动派发任务，成员需要显式调用 `group_send`。
 
 如果只想手动共享结果，可以在已完成回复下选择 **转发给会话**；选择 **引用结果** 则会先把内容放回可编辑的输入框，确认后再发。
+
+<a name="moderator"></a>
+
+## 自动主持人
+
+主持人**只读**地阅读本轮群聊与执行记录，生成一份“谁做什么”的分配方案。它自己不执行任何工具、不修改文件，只负责规划；真正的执行仍由各成员会话完成。
+
+在 **群详情 → 主持人 → 设置** 中启用，选择模式与每轮最多规划步数（**1–20**，默认 **6**），并可为规划单独选择模型（默认沿用 Host 默认模型）。聊天头部的 **更多操作 → 主持人** 也可打开同一设置。
+
+### 两种模式
+
+| 模式 | 行为 |
+| --- | --- |
+| **建议模式（默认）** | 点击 **规划本轮** 生成方案，逐条勾选后 **批准并派发**，也可整体拒绝。批准前不会有任何会话被调用。 |
+| **自动模式** | 首次 **规划本轮** 后，在步数预算内自动派发；本轮任务全部结束后自动重新规划，直到目标完成或预算用尽。启用时需确认风险。 |
+
+### 分配与依赖
+
+- 每条分配指定一个成员和一段任务正文，派发时**沿用该成员各自的模型、推理等级与权限**；主持人不会提升自己的权限。
+- 分配可声明依赖：前置任务完成后，后续任务才会派发。
+- 主持人消息在群内带 **主持人分配** 标记并保留来源；对其执行回退会追溯到触发本轮规划的用户请求。
+
+### 自动模式的安全边界
+
+- **步数预算**：每轮规划次数有上限，用尽即停止，不会无限循环。
+- **遇错即停**：出现待确认或失败任务时立即停止，且**不会自动重试**待确认任务。
+- **目标完成即停**：主持人判定目标达成时停止并标注。
+- 可随时点击 **停止主持人**；暂停或结束本轮也会停止新的自动派发。
+
+主持人规划使用 Host 的模型生成结构化方案，不调用工具，也不会重新执行成员任务。规划失败或 Host 重新加载中断时，会显示可重试的失败状态，不会擅自派发。窄屏下若方案待批准或主持人已停止，输入框上方会出现提示条，点击可进入群详情查看。
 
 <a name="conversation-controls"></a>
 
